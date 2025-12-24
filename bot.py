@@ -1,16 +1,14 @@
-# bot.py
 import asyncio
 import logging
 from aiogram import Bot, Dispatcher, types, F
-from aiogram.filters import Command
+from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message, CallbackQuery
-from aiogram.filters import CommandStart
 
 from config import BOT_TOKEN, ADMIN_ID
 from database import Database
-from keyboards import get_main_keyboard, get_admin_keyboard, get_confirm_keyboard
+from keyboards import get_main_keyboard, get_admin_keyboard, get_confirm_keyboard, get_cancel_keyboard
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -24,7 +22,8 @@ db = Database()
 # Состояния FSM
 class Form(StatesGroup):
     waiting_for_address = State()
-    waiting_for_gift_code = State()
+    waiting_for_qr_photo = State()       # Для фото QR-кода
+    waiting_for_pickup_address = State()  # Для адреса пункта выдачи
     admin_message = State()
 
 # Команда /start
@@ -36,7 +35,7 @@ async def cmd_start(message: Message):
         "🎅 Стать участником - зарегистрироваться в игре\n"
         "📦 Указать адрес доставки - куда отправить вам подарок\n"
         "🎁 Узнать своего получателя - после жеребьевки\n"
-        "🔐 Отправить код подарка - чтобы получатель мог забрать подарок\n\n"
+        "📦 Отправить QR-код и адрес выдачи - чтобы получатель мог забрать подарок\n\n"
         "Для администрирования используйте /admin",
         reply_markup=get_main_keyboard()
     )
@@ -103,13 +102,19 @@ async def request_address(message: Message, state: FSMContext):
     await message.answer(
         "📝 Пожалуйста, введите ваш адрес доставки в формате:\n"
         "Город, улица, дом, квартира, индекс\n\n"
-        "Пример: Москва, ул. Пушкина, д. 10, кв. 5, 123456"
+        "Пример: Москва, ул. Пушкина, д. 10, кв. 5, 123456",
+        reply_markup=get_cancel_keyboard()
     )
     await state.set_state(Form.waiting_for_address)
 
 # Получение адреса
 @dp.message(Form.waiting_for_address)
 async def process_address(message: Message, state: FSMContext):
+    if message.text == "❌ Отмена":
+        await message.answer("❌ Ввод адреса отменен.", reply_markup=get_main_keyboard())
+        await state.clear()
+        return
+    
     address = message.text
     db.update_address(message.from_user.id, address)
     
@@ -134,7 +139,7 @@ async def get_recipient_info(message: Message):
         await message.answer("Вы не участвуете в текущей жеребьевке.")
         return
     
-    # Отправляем информацию о получателе (без адреса, если он еще не указан)
+    # Отправляем информацию о получателе
     recipient_info = (
         f"🎅 Ваш получатель: {recipient[2]}\n"
         f"👤 Username: @{recipient[1] if recipient[1] else 'не указан'}\n"
@@ -148,58 +153,125 @@ async def get_recipient_info(message: Message):
     
     await message.answer(recipient_info)
 
-# Кнопка "Отправить код подарка"
-@dp.message(F.text == "🔐 Отправить код подарка")
-async def request_gift_code(message: Message, state: FSMContext):
+# Кнопка "Отправить QR-код и адрес выдачи"
+@dp.message(F.text == "📦 Отправить QR-код и адрес выдачи")
+async def request_qr_and_address(message: Message, state: FSMContext):
     await message.answer(
-        "🔐 Введите код/трек-номер для получения вашего подарка:\n\n"
-        "Это может быть:\n"
-        "• Трек-номер почтового отправления\n"
-        "• Код для получения в пункте выдачи\n"
-        "• Другой идентификатор подарка"
+        "📦 **Отправка данных для получения подарка**\n\n"
+        "1️⃣ **Сначала отправьте фото QR-кода**\n"
+        "(сфотографируйте или загрузите готовое изображение)\n\n"
+        "2️⃣ **Затем введите адрес пункта выдачи**\n"
+        "Формат: Город, адрес пункта, время работы\n\n"
+        "Пример QR-кода от СДЭК/Boxberry/Почты России:",
+        reply_markup=get_cancel_keyboard()
     )
-    await state.set_state(Form.waiting_for_gift_code)
+    await state.set_state(Form.waiting_for_qr_photo)
 
-# Получение кода подарка и пересылка получателю
-@dp.message(Form.waiting_for_gift_code)
-async def process_gift_code(message: Message, state: FSMContext):
-    gift_code = message.text
-    santa_id = message.from_user.id
+# Обработка фото QR-кода
+@dp.message(Form.waiting_for_qr_photo, F.photo)
+async def process_qr_photo(message: Message, state: FSMContext):
+    """Сохраняем фото QR-кода и запрашиваем адрес"""
+    # Сохраняем file_id фото во временное хранилище
+    photo = message.photo[-1]  # Самое качественное фото
+    await state.update_data(qr_photo_id=photo.file_id)
     
-    # Сохраняем код в базе
-    db.update_gift_code(santa_id, gift_code)
+    await message.answer(
+        "✅ **QR-код принят!**\n\n"
+        "Теперь введите адрес пункта выдачи:\n\n"
+        "**Формат:**\n"
+        "• Город\n"
+        "• Адрес пункта\n"
+        "• Время работы\n"
+        "• Дополнительная информация (если нужно)\n\n"
+        "Пример:\n"
+        "Москва, ул. Тверская, д. 10, ПВЗ СДЭК\n"
+        "Пн-Пт: 10:00-20:00, Сб: 11:00-18:00\n"
+        "Код для получения: 123-456",
+        reply_markup=get_cancel_keyboard()
+    )
+    await state.set_state(Form.waiting_for_pickup_address)
+
+# Если отправили не фото в состоянии ожидания QR-кода
+@dp.message(Form.waiting_for_qr_photo)
+async def wrong_qr_format(message: Message, state: FSMContext):
+    """Если отправили не фото"""
+    if message.text == "❌ Отмена":
+        await message.answer("❌ Отправка QR-кода отменена.", reply_markup=get_main_keyboard())
+        await state.clear()
+        return
+    
+    await message.answer(
+        "❌ Пожалуйста, отправьте именно **фото QR-кода**.\n"
+        "Нажмите на скрепку 📎 и выберите фото из галереи."
+    )
+
+# Обработка адреса пункта выдачи
+@dp.message(Form.waiting_for_pickup_address)
+async def process_pickup_address(message: Message, state: FSMContext):
+    """Получаем адрес и отправляем всё получателю"""
+    if message.text == "❌ Отмена":
+        await message.answer("❌ Отправка данных отменена.", reply_markup=get_main_keyboard())
+        await state.clear()
+        return
+    
+    pickup_address = message.text
+    user_data = await state.get_data()
+    qr_photo_id = user_data.get('qr_photo_id')
+    
+    if not qr_photo_id:
+        await message.answer("❌ Ошибка: QR-код не найден. Начните заново.", reply_markup=get_main_keyboard())
+        await state.clear()
+        return
+    
+    santa_id = message.from_user.id
+    santa_info = db.get_participant(santa_id)
     
     # Получаем информацию о получателе
     recipient = db.get_recipient(santa_id)
     
-    if recipient and recipient[0]:  # recipient[0] = user_id
+    if recipient and recipient[0]:
         recipient_id = recipient[0]
         
-        # Получаем информацию о санте
-        santa_info = db.get_participant(santa_id)
-        
-        # Отправляем код получателю
         try:
-            await bot.send_message(
-                recipient_id,
-                f"🎁 Ваш Тайный Санта отправил вам подарок!\n\n"
-                f"🔐 Код для получения: {gift_code}\n"
-                f"🎅 От: {santa_info[2]} (@{santa_info[1] if santa_info[1] else 'username не указан'})"
+            # Отправляем получателю ВСЁ одним сообщением
+            await bot.send_photo(
+                chat_id=recipient_id,
+                photo=qr_photo_id,
+                caption=(
+                    "🎁 **ВАШ ПОДАРОК ГОТОВ К ПОЛУЧЕНИЮ!**\n\n"
+                    f"🎅 **От Тайного Санты:** {santa_info[2]}\n"
+                    f"📱 @{santa_info[1] if santa_info[1] else 'без username'}\n\n"
+                    "📍 **АДРЕС ПУНКТА ВЫДАЧИ:**\n"
+                    f"{pickup_address}\n\n"
+                    "📷 **QR-код прикреплен выше**\n"
+                    "Покажите его на кассе для получения посылки.\n\n"
+                    "⏰ **Не забудьте взять с собой паспорт!**"
+                )
             )
+            
+            # Сохраняем данные в базу
+            db.update_gift_code(santa_id, f"QR+ADDRESS:{qr_photo_id[:20]}...")
+            
             await message.answer(
-                "✅ Код подарка успешно отправлен вашему получателю!",
+                "✅ **Отлично! Данные отправлены получателю!**\n\n"
+                "Ваш получатель получил:\n"
+                "• Фото QR-кода\n"
+                "• Адрес пункта выдачи\n"
+                "• Инструкции по получению\n\n"
+                "Теперь осталось только ждать, когда он заберет подарок! 🎄",
                 reply_markup=get_main_keyboard()
             )
+            
         except Exception as e:
+            logger.error(f"Ошибка отправки: {e}")
             await message.answer(
-                "⚠️ Не удалось отправить код получателю. "
+                "❌ Не удалось отправить данные получателю.\n"
                 "Возможно, он заблокировал бота.",
                 reply_markup=get_main_keyboard()
             )
-            logger.error(f"Failed to send message to {recipient_id}: {e}")
     else:
         await message.answer(
-            "❌ Не найден получатель. Обратитесь к администратору.",
+            "❌ Получатель не найден. Проверьте, проведена ли жеребьевка.",
             reply_markup=get_main_keyboard()
         )
     
@@ -220,7 +292,8 @@ async def list_participants(message: Message):
     response = "📋 Список участников:\n\n"
     for p in participants:
         status = "✅" if p[3] else "❌"  # p[3] = address
-        response += f"{p[2]} (@{p[1]}) - Адрес: {status}\n"
+        gift_status = "🎁" if p[4] else "⏳"  # p[4] = gift_code
+        response += f"{p[2]} (@{p[1]}) - Адрес: {status} Подарок: {gift_status}\n"
     
     await message.answer(response)
 
@@ -251,7 +324,8 @@ async def perform_draw(message: Message):
                         f"🎉 Жеребьевка проведена!\n\n"
                         f"🎅 Ваш получатель: {recipient[2]}\n"
                         f"👤 @{recipient[1] if recipient[1] else 'username не указан'}\n\n"
-                        "Теперь вы можете отправить подарок!"
+                        "Теперь вы можете отправить подарок!\n"
+                        "Не забудьте потом отправить QR-код и адрес выдачи."
                     )
                 except Exception as e:
                     logger.error(f"Failed to notify {user_id}: {e}")
@@ -311,17 +385,34 @@ async def back_to_main(message: Message):
 @dp.message(F.text == "ℹ️ Помощь")
 async def show_help(message: Message):
     help_text = (
-        "🎅 Помощь по Тайному Санте 🎄\n\n"
-        "Как это работает:\n"
-        "1. Нажмите '🎅 Стать участником'\n"
-        "2. Укажите '📦 Адрес доставки'\n"
-        "3. После жеребьевки нажмите '🎁 Узнать своего получателя'\n"
-        "4. Отправьте подарок получателю\n"
-        "5. Нажмите '🔐 Отправить код подарка'\n\n"
-        "Ваш Санта также отправит вам код для получения подарка!\n\n"
+        "🎅 **Помощь по Тайному Санте** 🎄\n\n"
+        "**Как это работает:**\n"
+        "1. 🎅 **Стать участником** - регистрация в игре\n"
+        "2. 📦 **Указать адрес доставки** - куда вам отправят подарок\n"
+        "3. 🎁 **Узнать своего получателя** - после жеребьевки\n"
+        "4. 📦 **Отправить QR-код и адрес выдачи** - когда отправили подарок\n\n"
+        "**Про отправку QR-кода:**\n"
+        "• Сфотографируйте QR-код из приложения доставки\n"
+        "• Отправьте фото боту\n"
+        "• Введите адрес пункта выдачи\n"
+        "• Получатель получит всё для получения подарка!\n\n"
+        "**Ваш Санта также отправит вам QR-код для получения!**\n\n"
         "Вопросы? Обращайтесь к организатору."
     )
     await message.answer(help_text)
+
+# Обработка команды отмены для всех состояний
+@dp.message(F.text == "❌ Отмена")
+async def cancel_handler(message: Message, state: FSMContext):
+    current_state = await state.get_state()
+    if current_state is None:
+        return
+    
+    await state.clear()
+    await message.answer(
+        "❌ Действие отменено.",
+        reply_markup=get_main_keyboard()
+    )
 
 # Основная функция
 async def main():

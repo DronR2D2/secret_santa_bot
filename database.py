@@ -50,10 +50,13 @@ class Database:
         ''', (address, user_id))
         self.conn.commit()
     
-    def update_gift_code(self, user_id, gift_code):
+    def update_gift_code(self, user_id, gift_data):
+        """Сохраняет данные о подарке (текст, QR, адрес)"""
         self.cursor.execute('''
-            UPDATE participants SET gift_code = ? WHERE user_id = ?
-        ''', (gift_code, user_id))
+            UPDATE participants 
+            SET gift_code = ?, gift_type = 'qr_with_address' 
+            WHERE user_id = ?
+        ''', (gift_data, user_id))
         self.conn.commit()
     
     def get_participant(self, user_id):

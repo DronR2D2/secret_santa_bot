@@ -1,36 +1,65 @@
-# keyboards.py
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 
 # Основная клавиатура
 def get_main_keyboard():
-    keyboard = ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="🎅 Стать участником")],
-            [KeyboardButton(text="📦 Указать адрес доставки")],
-            [KeyboardButton(text="🎁 Узнать своего получателя")],
-            [KeyboardButton(text="🔐 Отправить код подарка")],
-            [KeyboardButton(text="ℹ️ Помощь")]
-        ],
-        resize_keyboard=True
+    """
+    Создает и возвращает основную клавиатуру для пользователя.
+    """
+    keyboard = [
+        [KeyboardButton(text="🎅 Стать участником")],
+        [KeyboardButton(text="📦 Указать адрес доставки")],
+        [KeyboardButton(text="🎁 Узнать своего получателя")],
+        [KeyboardButton(text="📦 Отправить QR-код и адрес выдачи")],
+        [KeyboardButton(text="ℹ️ Помощь")]
+    ]
+    
+    return ReplyKeyboardMarkup(
+        keyboard=keyboard,
+        resize_keyboard=True,
+        input_field_placeholder="Выберите действие..."
     )
-    return keyboard
 
 # Клавиатура администратора
 def get_admin_keyboard():
-    keyboard = ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="👥 Список участников")],
-            [KeyboardButton(text="🎲 Провести жеребьевку")],
-            [KeyboardButton(text="📢 Сделать рассылку")],
-            [KeyboardButton(text="◀️ Назад")]
-        ],
-        resize_keyboard=True
+    """
+    Создает и возвращает клавиатуру для администратора.
+    """
+    keyboard = [
+        [KeyboardButton(text="👥 Список участников")],
+        [KeyboardButton(text="🎲 Провести жеребьевку")],
+        [KeyboardButton(text="📢 Сделать рассылку")],
+        [KeyboardButton(text="◀️ Назад")]
+    ]
+    
+    return ReplyKeyboardMarkup(
+        keyboard=keyboard,
+        resize_keyboard=True,
+        input_field_placeholder="Панель управления..."
     )
-    return keyboard
 
-# Инлайн кнопка для подтверждения
+# Инлайн кнопка для подтверждения участия
 def get_confirm_keyboard():
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+    """
+    Создает и возвращает инлайн-клавиатуру для подтверждения участия.
+    """
+    buttons = [
         [InlineKeyboardButton(text="✅ Да, я участвую!", callback_data="confirm_participation")]
-    ])
-    return keyboard
+    ]
+    
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+# Клавиатура только с кнопкой отмены (для FSM состояний)
+def get_cancel_keyboard():
+    """
+    Создает простую клавиатуру с кнопкой отмены.
+    Полезна для состояний, где пользователь вводит текст.
+    """
+    keyboard = [
+        [KeyboardButton(text="❌ Отмена")]
+    ]
+    
+    return ReplyKeyboardMarkup(
+        keyboard=keyboard,
+        resize_keyboard=True,
+        one_time_keyboard=True  # Скрывается после нажатия
+    )
